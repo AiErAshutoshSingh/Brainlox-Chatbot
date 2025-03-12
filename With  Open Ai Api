@@ -1,0 +1,60 @@
+import requests
+from bs4 import BeautifulSoup
+import openai
+import faiss
+import numpy as np
+import gradio as gr
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.embeddings.openai import OpenAIEmbeddings
+
+openai.api_key = "your-api-key-here"
+
+
+url = "https://brainlox.com/courses/category/technical"
+response = requests.get(url)
+soup = BeautifulSoup(response.text, "html.parser")
+
+text_content = " ".join([p.text for p in soup.find_all("p")])
+
+
+text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+documents = text_splitter.split_text(text_content)
+
+
+embedding_model = OpenAIEmbeddings(model="text-embedding-ada-002")
+embeddings = np.array([embedding_model.embed_query(doc) for doc in documents])
+
+dimension = embeddings.shape[1]
+index = faiss.IndexFlatL2(dimension)
+index.add(embeddings)
+
+
+def chatbot(query):
+    # Generate embedding for user query
+    query_embedding = np.array(embedding_model.embed_query(query)).reshape(1, -1)
+
+  
+    _, I = index.search(query_embedding, k=1)
+    best_match = documents[I[0][0]]
+
+    
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are an AI chatbot answering questions about Brainlox courses."},
+            {"role": "user", "content": f"Question: {query}\nRelevant Info: {best_match}"},
+        ]
+    )
+
+    return response["choices"][0]["message"]["content"]
+
+
+iface = gr.Interface(
+    fn=chatbot,
+    inputs=gr.Textbox(lines=2, placeholder="Ask me about Brainlox courses..."),
+    outputs="text",
+    title="Brainlox Chatbot",
+    description="Ask questions about technical courses on Brainlox."
+)
+
+iface.launch(share=True)  # Generates a public link
